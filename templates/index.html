@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drive Cataloger</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .folder-tree {
+            margin-left: 20px;
+        }
+
+        .folder-section {
+            margin-bottom: 1rem;
+        }
+
+        .folder-header {
+            background-color: #e9ecef;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .folder-header:hover {
+            background-color: #dee2e6;
+        }
+
+        .folder-content {
+            display: none;
+            margin-left: 20px;
+        }
+
+        .folder-content.show {
+            display: block;
+        }
+
+        .table thead th {
+            background-color: #007bff;
+            color: white;
+            position: sticky;
+            top: 0;
+        }
+
+        .table tbody tr:hover {
+            background-color: #f1f1f1;
+        }
+
+        .folder-icon {
+            margin-right: 10px;
+        }
+
+        .toggle-icon {
+            margin-right: 5px;
+            transition: transform 0.2s;
+        }
+
+        .toggle-icon.expanded {
+            transform: rotate(90deg);
+        }
+
+        #errorMessage {
+            color: red;
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid red;
+            border-radius: 4px;
+            display: none;
+        }
+
+        #loadingMessage {
+            text-align: center;
+            margin: 20px 0;
+            display: none;
+        }
+
+        #login-container {
+            max-width: 400px;
+            margin: 100px auto;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Login Page -->
+    <div id="login-page" class="container">
+        <div id="login-container" class="text-center">
+            <h2 class="mb-4">Drive Cataloger</h2>
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Sign In</h5>
+                    <a href="/login" class="btn btn-primary btn-lg mt-3">
+                        <i class="bi bi-google me-2"></i>Sign in with Google
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application Page -->
+    <div id="app-page" style="display:none;">
+        <div class="container mt-4">
+            <div class="row">
+                <div class="col-md-8">
+                    <h1 class="text-center mb-4">Drive Cataloger</h1>
+                </div>
+                <div class="col-md-4 text-end">
+                    <div id="user-info" class="mt-2">
+                        <span id="user-name"></span>
+                        <a href="/logout" class="btn btn-danger btn-sm">Logout</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <input type="text" id="indexPath" class="form-control"
+                            placeholder="Enter path to index (e.g., D:\Documents)">
+                        <button class="btn btn-primary" onclick="indexFiles()">Index Files</button>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <input type="text" id="searchInput" class="form-control" placeholder="Search files...">
+                        <button class="btn btn-outline-secondary" onclick="searchFiles()">Search</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="errorMessage"></div>
+            <div id="loadingMessage">Loading files...</div>
+            <div id="folderContainer">
+                <!-- Folders will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Check authentication status
+        document.addEventListener('DOMContentLoaded', () => {
+            const loginPage = document.getElementById('login-page');
+            const appPage = document.getElementById('app-page');
+
+            // Check if user is logged in (you might want to add a backend endpoint for this)
+            fetch('/check_auth')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.authenticated) {
+                        loginPage.style.display = 'none';
+                        appPage.style.display = 'block';
+
+                        // Set user name
+                        document.getElementById('user-name').textContent = `Welcome, ${data.name}`;
+
+                        // Fetch files
+                        fetchFiles();
+                    } else {
+                        loginPage.style.display = 'block';
+                        appPage.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Authentication check failed:', error);
+                });
+        });
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function showLoading(show) {
+            document.getElementById('loadingMessage').style.display = show ? 'block' : 'none';
+        }
+
+        function formatBytes(bytes) {
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            if (bytes === 0) return '0 Bytes';
+            const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
+            return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
+        }
+
+        function createFileTable(files) {
+            if (!files || files.length === 0) return '';
+            return `
+                <div class="table-responsive">
+                    <table class="table table-striped table-bordered">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Size</th>
+                                <th>Last Modified</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${files.map(file => `
+                                <tr>
+                                    <td>${file.name}</td>
+                                    <td>${formatBytes(file.size)}</td>
+                                    <td>${new Date(file.modified).toLocaleString()}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        function createFolderTree(data, parentId = '') {
+            let html = '';
+
+            // Handle root files
+            if (data.files && data.files.length > 0) {
+                const currentId = parentId ? `${parentId}_files` : 'root_files';
+                html += `
+                    <div class="folder-section">
+                        <div class="folder-header" onclick="toggleFolder('${currentId}')">
+                            <span>
+                                <i class="bi bi-chevron-right toggle-icon"></i>
+                                <i class="bi bi-folder-fill folder-icon"></i>
+                                ${parentId ? 'Files' : 'Root Files'}
+                            </span>
+                            <span class="badge bg-primary">${data.files.length} files</span>
+                        </div>
+                        <div id="${currentId}" class="folder-content">
+                            ${createFileTable(data.files)}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Handle subfolders
+            if (data.subfolders) {
+                Object.entries(data.subfolders).forEach(([folderName, folderData]) => {
+                    const currentId = parentId ? `${parentId}_${folderName}` : folderName;
+                    const fileCount = (folderData.files ? folderData.files.length : 0) +
+                        Object.values(folderData.subfolders || {}).reduce((acc, curr) =>
+                            acc + (curr.files ? curr.files.length : 0), 0);
+
+                    html += `
+                        <div class="folder-section">
+                            <div class="folder-header" onclick="toggleFolder('${currentId}')">
+                                <span>
+                                    <i class="bi bi-chevron-right toggle-icon"></i>
+                                    <i class="bi bi-folder-fill folder-icon"></i>
+                                    ${folderName}
+                                </span>
+                                <span class="badge bg-primary">${fileCount} files</span>
+                            </div>
+                            <div id="${currentId}" class="folder-content">
+                                ${createFolderTree(folderData, currentId)}
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            return html;
+        }
+
+        function toggleFolder(folderId) {
+            const content = document.getElementById(folderId);
+            const header = content.previousElementSibling;
+            const icon = header.querySelector('.toggle-icon');
+            content.classList.toggle('show');
+            icon.classList.toggle('expanded');
+        }
+
+        async function indexFiles() {
+            try {
+                showLoading(true);
+                document.getElementById('errorMessage').style.display = 'none';
+
+                const path = document.getElementById('indexPath').value;
+                if (!path) {
+                    throw new Error('Please enter a valid path');
+                }
+
+                const response = await fetch('/index_files', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ path: path })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert(`Successfully indexed ${result.files_count} files`);
+                    // Refresh file list after indexing
+                    await fetchFiles();
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                showError(`Error indexing files: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function fetchFiles() {
+            try {
+                showLoading(true);
+                document.getElementById('errorMessage').style.display = 'none';
+
+                const response = await fetch('/files');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const treeData = await response.json();
+
+                const folderContainer = document.getElementById('folderContainer');
+                folderContainer.innerHTML = createFolderTree(treeData);
+            } catch (error) {
+                showError(`Error loading files: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function searchFiles() {
+            try {
+                showLoading(true);
+                document.getElementById('errorMessage').style.display = 'none';
+
+                const query = document.getElementById('searchInput').value;
+                const response = await fetch(`/search?q=${query}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const treeData = await response.json();
+
+                const folderContainer = document.getElementById('folderContainer');
+                folderContainer.innerHTML = createFolderTree(treeData);
+            } catch (error) {
+                showError(`Error searching files: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+    </script>
+</body>
+
+</html>
